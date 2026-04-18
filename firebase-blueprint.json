@@ -1,0 +1,49 @@
+{
+  "entities": {
+    "Trip": {
+      "title": "Trip",
+      "description": "A travel journey with budget allocations.",
+      "type": "object",
+      "properties": {
+        "trip_name": { "type": "string", "description": "Name of the trip" },
+        "user_email": { "type": "string", "description": "Email of the trip owner" },
+        "budget": {
+          "type": "object",
+          "properties": {
+            "accommodation": { "type": "number" },
+            "transport": { "type": "number" },
+            "food_activities": { "type": "number" },
+            "shopping": { "type": "number" },
+            "miscellaneous": { "type": "number" }
+          },
+          "required": ["accommodation", "transport", "food_activities", "shopping", "miscellaneous"]
+        },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["trip_name", "user_email", "budget"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "An individual expense logged during a trip.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date-time" },
+        "category": { "type": "string", "enum": ["accommodation", "transport", "food_activities", "shopping", "miscellaneous"] },
+        "amount_inr": { "type": "number" },
+        "notes": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["date", "category", "amount_inr"]
+    }
+  },
+  "firestore": {
+    "/trips/{tripId}": {
+      "schema": "Trip",
+      "description": "Top-level collection for trips."
+    },
+    "/trips/{tripId}/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Sub-collection for expenses within a trip."
+    }
+  }
+}

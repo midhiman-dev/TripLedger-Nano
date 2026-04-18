@@ -1,0 +1,5 @@
+{
+  "name": "TripLedger-Nano",
+  "description": "A sophisticated trip budget tracker with real-time variance analysis and PDF reporting.",
+  "requestFramePermissions": []
+}
