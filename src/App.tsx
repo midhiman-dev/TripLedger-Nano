@@ -20,6 +20,7 @@ import {
   onSnapshot, 
   doc, 
   getDoc,
+  setDoc,
   addDoc,
   updateDoc,
   deleteDoc,
@@ -27,7 +28,7 @@ import {
   orderBy
 } from 'firebase/firestore';
 import { auth, db, googleProvider } from './firebase';
-import { Trip, Expense, CATEGORIES, Category } from './types';
+import { Trip, Expense, CATEGORIES, Category, UserSettings, DEFAULT_PAYMENT_SOURCES } from './types';
 import { generateTripReport } from './lib/pdf';
 import { format, differenceInDays, startOfDay, isBefore } from 'date-fns';
 import { 
@@ -48,6 +49,7 @@ import {
   MoreHorizontal,
   StickyNote,
   Calendar,
+  Wallet,
   Plus,
   Rocket,
   ChevronRight,
@@ -93,7 +95,11 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 }
 
 // --- Context ---
-const AuthContext = createContext<{ user: User | null; loading: boolean }>({ user: null, loading: true });
+const AuthContext = createContext<{ user: User | null; loading: boolean; settings: UserSettings }>({ 
+  user: null, 
+  loading: true, 
+  settings: { payment_sources: DEFAULT_PAYMENT_SOURCES } 
+});
 const ToastContext = createContext<{ showToast: (msg: string, type?: 'success' | 'error') => void }>({ showToast: () => {} });
 
 const Toast: React.FC<{ message: string; type: 'success' | 'error'; onClose: () => void }> = ({ message, type, onClose }) => (
@@ -123,13 +129,36 @@ const LoadingSpinner: React.FC<{ size?: number; className?: string }> = ({ size 
 const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [settings, setSettings] = useState<UserSettings>({ payment_sources: DEFAULT_PAYMENT_SOURCES });
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
-    return onAuthStateChanged(auth, (user) => {
+    let unsubscribeSettings: (() => void) | undefined;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       setUser(user);
+      if (user) {
+        // Fetch user settings
+        const settingsRef = doc(db, 'user_settings', user.uid);
+        unsubscribeSettings = onSnapshot(settingsRef, (docSnap) => {
+          if (docSnap.exists()) {
+            setSettings(docSnap.data() as UserSettings);
+          } else {
+            // Initialize default settings if not exists
+            setSettings({ payment_sources: DEFAULT_PAYMENT_SOURCES });
+          }
+        });
+      } else {
+        if (unsubscribeSettings) unsubscribeSettings();
+        setSettings({ payment_sources: DEFAULT_PAYMENT_SOURCES });
+      }
       setLoading(false);
     });
+
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeSettings) unsubscribeSettings();
+    };
   }, []);
 
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
@@ -138,7 +167,7 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading }}>
+    <AuthContext.Provider value={{ user, loading, settings }}>
       <ToastContext.Provider value={{ showToast }}>
         {children}
         <AnimatePresence>
@@ -492,7 +521,14 @@ const TripDetails = () => {
         {expenses.map(expense => (
           <div key={expense.id} className="bg-surface-container-lowest p-4 rounded-xl shadow-sm border-l-4 border-outline flex justify-between items-center group">
             <div className="flex-1">
-              <p className="font-bold text-on-surface">{CATEGORIES.find(c => c.value === expense.category)?.label}</p>
+              <div className="flex items-center gap-2">
+                <p className="font-bold text-on-surface">{CATEGORIES.find(c => c.value === expense.category)?.label}</p>
+                {expense.payment_source && (
+                  <span className="text-[10px] font-label font-bold bg-surface-container-high px-2 py-0.5 rounded-full text-outline uppercase tracking-wider">
+                    {expense.payment_source}
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-outline">{format(expense.date.toDate(), 'MMM dd, yyyy')}</p>
               {expense.notes && <p className="text-xs text-on-surface-variant mt-1 italic">"{expense.notes}"</p>}
             </div>
@@ -773,9 +809,11 @@ const ExpenseForm = () => {
   const navigate = useNavigate();
   const { tripId, expenseId } = useParams();
   const { showToast } = useContext(ToastContext);
+  const { settings } = useContext(AuthContext);
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState<Category>('food_activities');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [paymentSource, setPaymentSource] = useState(settings.payment_sources[0] || 'Cash');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -791,6 +829,9 @@ const ExpenseForm = () => {
             setCategory(data.category);
             setDate(data.date.toDate().toISOString().split('T')[0]);
             setNotes(data.notes || '');
+            if (data.payment_source) {
+              setPaymentSource(data.payment_source);
+            }
           }
         } catch (error) {
           handleFirestoreError(error, OperationType.GET, `trips/${tripId}/expenses/${expenseId}`);
@@ -814,6 +855,7 @@ const ExpenseForm = () => {
         amount_inr: Number(amount),
         category,
         date: new Date(date),
+        payment_source: paymentSource,
         notes,
         updated_at: serverTimestamp()
       };
@@ -882,6 +924,23 @@ const ExpenseForm = () => {
                 {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
               </select>
             </div>
+          </div>
+        </div>
+
+        <div className="bg-surface-container-lowest rounded-xl p-6 shadow-sm border-l-4 border-primary-container">
+          <label className="font-label text-[10px] uppercase tracking-[0.1em] text-outline font-semibold mb-3 block">Payment Source</label>
+          <div className="flex items-center gap-3">
+            <Wallet size={20} className="text-primary" />
+            <select 
+              value={paymentSource}
+              onChange={e => setPaymentSource(e.target.value)}
+              className="bg-transparent border-none p-0 font-body text-on-surface focus:ring-0 w-full appearance-none"
+            >
+              <option value="">Select Payment Source</option>
+              {settings.payment_sources.map(source => (
+                <option key={source} value={source}>{source}</option>
+              ))}
+            </select>
           </div>
         </div>
 
@@ -1137,6 +1196,112 @@ const Analytics = () => {
   );
 };
 
+const Settings = () => {
+  const { user, settings } = useContext(AuthContext);
+  const { showToast } = useContext(ToastContext);
+  const [newSource, setNewSource] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleAddSource = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !newSource.trim()) return;
+    if (settings.payment_sources.includes(newSource.trim())) {
+      showToast('Source already exists', 'error');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const updatedSources = [...settings.payment_sources, newSource.trim()];
+      await setDoc(doc(db, 'user_settings', user.uid), {
+        payment_sources: updatedSources
+      });
+      setNewSource('');
+      showToast('Payment source added');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `user_settings/${user.uid}`);
+      showToast('Failed to add source', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRemoveSource = async (source: string) => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const updatedSources = settings.payment_sources.filter(s => s !== source);
+      await setDoc(doc(db, 'user_settings', user.uid), {
+        payment_sources: updatedSources
+      });
+      showToast('Payment source removed');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `user_settings/${user.uid}`);
+      showToast('Failed to remove source', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Layout title="Settings" showBack>
+      <div className="space-y-8">
+        <section className="bg-surface-container-lowest rounded-xl p-8 shadow-sm border-l-4 border-primary">
+          <h3 className="font-headline font-bold text-lg mb-6 flex items-center gap-2">
+            <Wallet size={20} className="text-primary" /> Payment Sources
+          </h3>
+          
+          <form onSubmit={handleAddSource} className="flex gap-2 mb-8">
+            <input 
+              required
+              value={newSource}
+              onChange={e => setNewSource(e.target.value)}
+              className="flex-1 bg-surface-container rounded-full px-6 py-3 font-body text-sm focus:ring-2 focus:ring-primary/20 transition-all border-none"
+              placeholder="e.g. Forex Card, Amex"
+            />
+            <button 
+              type="submit"
+              disabled={loading}
+              className="bg-primary text-white p-3 rounded-full shadow-lg active:scale-90 transition-transform disabled:opacity-50"
+            >
+              <Plus size={20} />
+            </button>
+          </form>
+
+          <div className="space-y-3">
+            {settings.payment_sources.map(source => (
+              <div key={source} className="flex justify-between items-center p-4 bg-surface-container rounded-xl group">
+                <span className="font-body font-medium">{source}</span>
+                <button 
+                  onClick={() => handleRemoveSource(source)}
+                  className="p-2 text-outline hover:text-error opacity-0 group-hover:opacity-100 transition-all"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="bg-surface-container-lowest rounded-xl p-8 shadow-sm border-l-4 border-outline opacity-70">
+          <h3 className="font-headline font-bold text-lg mb-2 flex items-center gap-2">
+            <UserIcon size={20} className="text-outline" /> Account Info
+          </h3>
+          <p className="text-sm text-outline-variant">{user?.email}</p>
+          <div className="mt-8">
+            <button 
+              onClick={() => signOut(auth)}
+              className="px-6 py-2 rounded-full border border-error text-error font-bold text-sm hover:bg-error/5 transition-colors"
+            >
+              Sign Out
+            </button>
+          </div>
+        </section>
+      </div>
+    </Layout>
+  );
+};
+
 const AppRoutes = () => {
   const { user, loading } = useContext(AuthContext);
 
@@ -1153,7 +1318,7 @@ const AppRoutes = () => {
       <Route path="/trip/:tripId/expense/:expenseId/edit" element={user ? <ExpenseForm /> : <Navigate to="/login" />} />
       <Route path="/log" element={user ? <Dashboard /> : <Navigate to="/login" />} /> {/* Default to dashboard to pick a trip */}
       <Route path="/analytics" element={user ? <Analytics /> : <Navigate to="/login" />} />
-      <Route path="/settings" element={user ? <Layout title="Settings"><div className="p-10 text-center">Settings coming soon...</div></Layout> : <Navigate to="/login" />} />
+      <Route path="/settings" element={user ? <Settings /> : <Navigate to="/login" />} />
     </Routes>
   );
 };

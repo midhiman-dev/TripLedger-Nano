@@ -24,9 +24,16 @@ export interface Expense {
   date: any;
   category: Category;
   amount_inr: number;
+  payment_source?: string;
   notes: string;
   created_at: any;
 }
+
+export interface UserSettings {
+  payment_sources: string[];
+}
+
+export const DEFAULT_PAYMENT_SOURCES = ["Cash", "Credit Card", "Netbanking", "UPI"];
 
 export const CATEGORIES: { value: Category; label: string; icon: string; color: string }[] = [
   { value: 'accommodation', label: 'Accommodation', icon: 'hotel', color: 'primary' },

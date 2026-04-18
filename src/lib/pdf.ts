@@ -91,20 +91,47 @@ export const generateTripReport = (trip: Trip, expenses: Expense[]) => {
     .map(e => [
       format(e.date.toDate(), 'MMM dd, yyyy'),
       CATEGORIES.find(c => c.value === e.category)?.label || e.category,
+      e.payment_source || '-',
       `INR ${e.amount_inr.toLocaleString()}`,
       e.notes || '-'
     ]);
 
   autoTable(doc, {
     startY: lastY + 20,
-    head: [['Date', 'Category', 'Amount', 'Notes']],
+    head: [['Date', 'Category', 'Source', 'Amount', 'Notes']],
     body: expenseData,
     theme: 'grid',
     headStyles: { fillColor: [0, 110, 28] } // Secondary color
   });
 
+  // Spending by Source Summary
+  const nextY = (doc as any).lastAutoTable.finalY || lastY + 40;
+  doc.setFontSize(14);
+  doc.setTextColor(0, 75, 113);
+  doc.text('Spending by Source', 14, nextY + 15);
+
+  const sourcesMap: { [key: string]: number } = {};
+  expenses.forEach(e => {
+    const s = e.payment_source || 'Unknown';
+    sourcesMap[s] = (sourcesMap[s] || 0) + e.amount_inr;
+  });
+
+  const sourcesData = Object.entries(sourcesMap).map(([source, amount]) => [
+    source,
+    `INR ${amount.toLocaleString()}`
+  ]);
+
+  autoTable(doc, {
+    startY: nextY + 20,
+    head: [['Source', 'Total Spent']],
+    body: sourcesData,
+    theme: 'plain',
+    headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0] },
+    columnStyles: { 1: { halign: 'right', fontStyle: 'bold' } }
+  });
+
   // Final Summary
-  const finalY = (doc as any).lastAutoTable.finalY || lastY + 30;
+  const finalY = (doc as any).lastAutoTable.finalY || nextY + 40;
   doc.setFontSize(12);
   doc.setTextColor(0);
   doc.text(`Total Budget: INR ${totalBudget.toLocaleString()}`, 14, finalY + 15);
